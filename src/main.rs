@@ -6,36 +6,90 @@
 #![warn(clippy::perf)]
 #![warn(clippy::unwrap_used)]
 
+mod bus;
+mod cpu;
+mod emulator;
+mod front;
+
 use {
+  bus::PlainRam,
+  emulator::Emulator,
   once_cell::sync::Lazy,
-  sdl2::{
-    event::Event,
-    image::LoadTexture,
-    keyboard::Keycode,
-    pixels::Color,
-    rect::{Point, Rect},
-    render::{Canvas, Texture, TextureCreator},
-    video::{Window, WindowContext},
-    EventPump, Sdl, VideoSubsystem,
-  },
-  std::{ops::ControlFlow, thread::sleep, time::Duration},
+  sdl2::{pixels::Color, rect::Rect},
 };
 
-const BLACK: Color = Color::RGB(0, 0, 0);
-const CANVAS_BUILD_ERROR: &str = "";
-const HEIGHT: u32 = 600;
-const HEIGHT_ERROR: &str = "";
-const TILE_SIZE: u8 = 16;
-const TILE_SIZE_I32: i32 = TILE_SIZE as i32;
-const TILE_SIZE_U32: u32 = TILE_SIZE as u32;
-const WIDTH: u32 = 800;
-const WIDTH_ERROR: &str = "";
-const WINDOW_BUILD_ERROR: &str = "";
+pub const BLACK: Color = Color::RGB(0, 0, 0);
+pub const CANVAS_BUILD_ERROR: &str = "";
+pub const HEIGHT: u32 = 600;
+pub const HEIGHT_ERROR: &str = "";
+pub const SLEEP_TIME: u64 = 10;
+pub const TILE_SIZE: u8 = 16;
+pub const TILE_SIZE_I32: i32 = TILE_SIZE as i32;
+pub const TILE_SIZE_U32: u32 = TILE_SIZE as u32;
+pub const WIDTH: u32 = 800;
+pub const WIDTH_ERROR: &str = "";
+pub const WINDOW_BUILD_ERROR: &str = "";
+
+const GAME_CODE: [u8; 309] = [
+  0x20, 0x06, 0x06, 0x20, 0x38, 0x06, 0x20, 0x0D, 0x06, 0x20, 0x2A, 0x06, 0x60, 0xA9, 0x02, 0x85,
+  0x02, 0xA9, 0x04, 0x85, 0x03, 0xA9, 0x11, 0x85, 0x10, 0xA9, 0x10, 0x85, 0x12, 0xA9, 0x0F, 0x85,
+  0x14, 0xA9, 0x04, 0x85, 0x11, 0x85, 0x13, 0x85, 0x15, 0x60, 0xA5, 0xFE, 0x85, 0x00, 0xA5, 0xFE,
+  0x29, 0x03, 0x18, 0x69, 0x02, 0x85, 0x01, 0x60, 0x20, 0x4D, 0x06, 0x20, 0x8D, 0x06, 0x20, 0xC3,
+  0x06, 0x20, 0x19, 0x07, 0x20, 0x20, 0x07, 0x20, 0x2D, 0x07, 0x4C, 0x38, 0x06, 0xA5, 0xFF, 0xC9,
+  0x77, 0xF0, 0x0D, 0xC9, 0x64, 0xF0, 0x14, 0xC9, 0x73, 0xF0, 0x1B, 0xC9, 0x61, 0xF0, 0x22, 0x60,
+  0xA9, 0x04, 0x24, 0x02, 0xD0, 0x26, 0xA9, 0x01, 0x85, 0x02, 0x60, 0xA9, 0x08, 0x24, 0x02, 0xD0,
+  0x1B, 0xA9, 0x02, 0x85, 0x02, 0x60, 0xA9, 0x01, 0x24, 0x02, 0xD0, 0x10, 0xA9, 0x04, 0x85, 0x02,
+  0x60, 0xA9, 0x02, 0x24, 0x02, 0xD0, 0x05, 0xA9, 0x08, 0x85, 0x02, 0x60, 0x60, 0x20, 0x94, 0x06,
+  0x20, 0xA8, 0x06, 0x60, 0xA5, 0x00, 0xC5, 0x10, 0xD0, 0x0D, 0xA5, 0x01, 0xC5, 0x11, 0xD0, 0x07,
+  0xE6, 0x03, 0xE6, 0x03, 0x20, 0x2A, 0x06, 0x60, 0xA2, 0x02, 0xB5, 0x10, 0xC5, 0x10, 0xD0, 0x06,
+  0xB5, 0x11, 0xC5, 0x11, 0xF0, 0x09, 0xE8, 0xE8, 0xE4, 0x03, 0xF0, 0x06, 0x4C, 0xAA, 0x06, 0x4C,
+  0x35, 0x07, 0x60, 0xA6, 0x03, 0xCA, 0x8A, 0xB5, 0x10, 0x95, 0x12, 0xCA, 0x10, 0xF9, 0xA5, 0x02,
+  0x4A, 0xB0, 0x09, 0x4A, 0xB0, 0x19, 0x4A, 0xB0, 0x1F, 0x4A, 0xB0, 0x2F, 0xA5, 0x10, 0x38, 0xE9,
+  0x20, 0x85, 0x10, 0x90, 0x01, 0x60, 0xC6, 0x11, 0xA9, 0x01, 0xC5, 0x11, 0xF0, 0x28, 0x60, 0xE6,
+  0x10, 0xA9, 0x1F, 0x24, 0x10, 0xF0, 0x1F, 0x60, 0xA5, 0x10, 0x18, 0x69, 0x20, 0x85, 0x10, 0xB0,
+  0x01, 0x60, 0xE6, 0x11, 0xA9, 0x06, 0xC5, 0x11, 0xF0, 0x0C, 0x60, 0xC6, 0x10, 0xA5, 0x10, 0x29,
+  0x1F, 0xC9, 0x1F, 0xF0, 0x01, 0x60, 0x4C, 0x35, 0x07, 0xA0, 0x00, 0xA5, 0xFE, 0x91, 0x00, 0x60,
+  0xA6, 0x03, 0xA9, 0x00, 0x81, 0x10, 0xA2, 0x00, 0xA9, 0x01, 0x81, 0x10, 0x60, 0xA2, 0x00, 0xEA,
+  0xEA, 0xCA, 0xD0, 0xFB, 0x60,
+];
+
 
 static COLON: Lazy<Rect> = Lazy::new(|| {
   Rect::new(
     10 * TILE_SIZE_I32,
     TILE_SIZE_I32,
+    TILE_SIZE_U32,
+    TILE_SIZE_U32,
+  )
+});
+static A: Lazy<Rect> = Lazy::new(|| {
+  Rect::new(
+    TILE_SIZE_I32,
+    2 * TILE_SIZE_I32,
+    TILE_SIZE_U32,
+    TILE_SIZE_U32,
+  )
+});
+static C: Lazy<Rect> = Lazy::new(|| {
+  Rect::new(
+    3 * TILE_SIZE_I32,
+    2 * TILE_SIZE_I32,
+    TILE_SIZE_U32,
+    TILE_SIZE_U32,
+  )
+});
+static O: Lazy<Rect> = Lazy::new(|| {
+  Rect::new(
+    15 * TILE_SIZE_I32,
+    2 * TILE_SIZE_I32,
+    TILE_SIZE_U32,
+    TILE_SIZE_U32,
+  )
+});
+static P: Lazy<Rect> = Lazy::new(|| {
+  Rect::new(
+    0,
+    3 * TILE_SIZE_I32,
     TILE_SIZE_U32,
     TILE_SIZE_U32,
   )
@@ -48,132 +102,15 @@ static X: Lazy<Rect> = Lazy::new(|| {
     TILE_SIZE_U32,
   )
 });
-
-struct Front {
-  canvas: Canvas<Window>,
-  event_pump: EventPump,
-}
-
-struct Cpu {
-  x: u8,
-}
-
-impl Cpu {
-  const fn new() -> Self {
-    Self { x: 0 }
-  }
-}
-
-impl Front {
-  fn new() -> Result<Self, String> {
-    let sdl: Sdl = sdl2::init()?;
-    let video: VideoSubsystem = sdl.video()?;
-    let window: Window = video
-      .window("RNES", WIDTH, HEIGHT)
-      .position_centered()
-      .build()
-      .map_err(|_| WINDOW_BUILD_ERROR)?;
-    let canvas: Canvas<Window> = window
-      .into_canvas()
-      .build()
-      .map_err(|_| CANVAS_BUILD_ERROR)?;
-    let event_pump: EventPump = sdl.event_pump()?;
-
-    Ok(Self { canvas, event_pump })
-  }
-
-  fn draw_nesfonts(&mut self, texture: &Texture<'_>) -> Result<(), String> {
-    let position = Point::new(0, 0);
-    let (width, height) = self.canvas.output_size()?;
-    let screen_position = position
-      + Point::new(
-        i32::try_from(width).map_err(|_| WIDTH_ERROR)? / 2,
-        i32::try_from(height).map_err(|_| HEIGHT_ERROR)? / 2,
-      );
-    let sprite = Rect::new(0, 0, 256, 96);
-    let screen_rect = Rect::from_center(screen_position, sprite.width(), sprite.height());
-    self.canvas.copy(texture, sprite, screen_rect)?;
-    Ok(())
-  }
-
-  fn draw_x(&mut self, texture: &Texture<'_>, x: u8) -> Result<(), String> {
-    let sprite = *X;
-    let screen_rect = Rect::new(0, 0, TILE_SIZE_U32, TILE_SIZE_U32);
-    self.canvas.copy(texture, sprite, screen_rect)?;
-
-    let sprite = *COLON;
-    let screen_rect = Rect::new(TILE_SIZE_I32, 0, TILE_SIZE_U32, TILE_SIZE_U32);
-    self.canvas.copy(texture, sprite, screen_rect)?;
-
-    let sprite = Rect::new(
-      i32::from(x / 100) * TILE_SIZE_I32,
-      TILE_SIZE_I32,
-      TILE_SIZE_U32,
-      TILE_SIZE_U32,
-    );
-    let screen_rect = Rect::new(3 * TILE_SIZE_I32, 0, TILE_SIZE_U32, TILE_SIZE_U32);
-    self.canvas.copy(texture, sprite, screen_rect)?;
-
-    let sprite = Rect::new(
-      i32::from(x % 100) / 10 * TILE_SIZE_I32,
-      TILE_SIZE_I32,
-      TILE_SIZE_U32,
-      TILE_SIZE_U32,
-    );
-    let screen_rect = Rect::new(4 * TILE_SIZE_I32, 0, TILE_SIZE_U32, TILE_SIZE_U32);
-    self.canvas.copy(texture, sprite, screen_rect)?;
-
-    let sprite = Rect::new(
-      i32::from(x % 10) * TILE_SIZE_I32,
-      TILE_SIZE_I32,
-      TILE_SIZE_U32,
-      TILE_SIZE_U32,
-    );
-    let screen_rect = Rect::new(5 * TILE_SIZE_I32, 0, TILE_SIZE_U32, TILE_SIZE_U32);
-    self.canvas.copy(texture, sprite, screen_rect)?;
-    Ok(())
-  }
-
-  fn handle_events(&mut self) -> ControlFlow<(), ()> {
-    for event in self.event_pump.poll_iter() {
-      match event {
-        Event::Quit { .. }
-        | Event::KeyDown {
-          keycode: Some(Keycode::Escape),
-          ..
-        } => return ControlFlow::Break(()),
-        _ => {}
-      }
-    }
-    ControlFlow::Continue(())
-  }
-
-  fn clear_black_and_present(&mut self) {
-    self.canvas.set_draw_color(BLACK);
-    self.canvas.clear();
-    self.canvas.present();
-  }
-}
+static Y: Lazy<Rect> = Lazy::new(|| {
+  Rect::new(
+    9 * TILE_SIZE_I32,
+    3 * TILE_SIZE_I32,
+    TILE_SIZE_U32,
+    TILE_SIZE_U32,
+  )
+});
 
 fn main() -> Result<(), String> {
-  let mut cpu: Cpu = Cpu::new();
-  let mut front: Front = Front::new()?;
-  let texture_creator: TextureCreator<WindowContext> = front.canvas.texture_creator();
-  let texture: Texture<'_> = texture_creator.load_texture("nesfont.png")?;
-
-  front.clear_black_and_present();
-
-  loop {
-    if front.handle_events().is_break() {
-      break Ok(());
-    }
-
-    front.canvas.clear();
-    front.draw_x(&texture, cpu.x)?;
-    front.draw_nesfonts(&texture)?;
-    front.canvas.present();
-
-    sleep(Duration::from_millis(10));
-    cpu.x = cpu.x.wrapping_add(1);
-  }
+  Emulator::<PlainRam>::start()
 }
